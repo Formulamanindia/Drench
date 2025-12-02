@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import io
-import tabula
+import tabula # This is the import that is failing
 import tempfile
 import os
 
