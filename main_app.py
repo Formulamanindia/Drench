@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
-import io
-import pdfplumber
+import io 
+# openpyxl is implicitly used by pandas for .xlsx files, but we don't import it directly.
 
 # --- Configuration Management (Uses st.session_state) ---
 
@@ -12,12 +12,12 @@ if 'account_list' not in st.session_state:
         "Shine Arc", "Shopforher", "Ansh Ent.", "Meesho India" 
     ]
 
-# Function to read and process the uploaded PDF files using pdfplumber
+# Function to read and process the uploaded Excel files using pandas
 def process_uploads(uploaded_files_map):
     all_data = []
     
-    # Define standard column mapping for Meesho picklist PDFs
-    # **NOTE: YOU MUST VERIFY THESE NAMES AGAINST YOUR ACTUAL PDF OUTPUT**
+    # Define standard column mapping for your picklist data
+    # **NOTE: YOU MUST VERIFY THESE NAMES AGAINST YOUR ACTUAL EXCEL HEADERS**
     COLUMN_MAPPING = {
         'Product ID': 'SKU', 
         'Qty to Ship': 'Qty', 
@@ -27,62 +27,48 @@ def process_uploads(uploaded_files_map):
     
     for account_name, file in uploaded_files_map.items():
         if file is not None:
-            st.info(f"Processing PDF for: **{account_name}**...")
+            st.info(f"Processing Excel for: **{account_name}**...")
             
             try:
-                # Open the PDF file using pdfplumber from the uploaded buffer
-                with pdfplumber.open(file) as pdf:
+                # Read the Excel file directly into a DataFrame using pandas
+                # Assumes the data is on the first sheet (sheet_name=0)
+                df = pd.read_excel(file, sheet_name=0) 
+                
+                # 4. Add the mandatory Account Name column
+                df['Source_Account'] = account_name
+                
+                # --- CRITICAL: STANDARDIZATION & CLEANING STEP ---
+                # Rename columns based on the predefined mapping
+                df.rename(columns=COLUMN_MAPPING, inplace=True, errors='ignore') 
+                
+                # Clean up data and validate
+                if 'SKU' in df.columns and 'Qty' in df.columns:
+                    # Convert Quantity to numeric, coercing errors to 0
+                    df['Qty'] = pd.to_numeric(df['Qty'], errors='coerce').fillna(0).astype(int)
+                    # Remove rows where SKU is missing
+                    df.dropna(subset=['SKU'], inplace=True) 
                     
-                    account_dfs = []
+                    # Select only the columns needed for the final output
+                    required_columns = ['SKU', 'Qty', 'Order ID', 'Source_Account']
+                    # Use a list comprehension to select only columns that exist
+                    df = df[[col for col in required_columns if col in df.columns]]
                     
-                    # Iterate through all pages in the PDF
-                    for page in pdf.pages:
-                        # Extract all detected tables on the page
-                        tables = page.extract_tables() 
-                        
-                        for table in tables:
-                            # Convert the extracted table (list of lists) into a DataFrame
-                            if table and len(table) > 1:
-                                # Use the first row as headers, and the rest as data
-                                df_page = pd.DataFrame(table[1:], columns=table[0])
-                                account_dfs.append(df_page)
-
-                    # Concatenate all extracted tables from all pages for this account
-                    if not account_dfs:
-                        st.warning(f"Could not extract any tables from {account_name}'s PDF. Skipping.")
-                        continue
-                        
-                    df = pd.concat(account_dfs, ignore_index=True)
+                    all_data.append(df)
+                    st.success(f"Successfully loaded data from **{account_name}**.")
+                else:
+                    st.error(f"Processing failed for {account_name}. Missing required columns (SKU or Qty) after renaming.")
+                    st.write("Columns found:", df.columns.tolist())
                     
-                    # 4. Add the mandatory Account Name column
-                    df['Source_Account'] = account_name
-                    
-                    # --- CRITICAL: STANDARDIZATION & CLEANING STEP ---
-                    # Rename columns based on the predefined mapping
-                    df.rename(columns=COLUMN_MAPPING, inplace=True, errors='ignore') 
-                    
-                    # Clean up data and validate
-                    if 'SKU' in df.columns and 'Qty' in df.columns:
-                        # Convert Quantity to numeric, coercing errors to 0
-                        df['Qty'] = pd.to_numeric(df['Qty'], errors='coerce').fillna(0).astype(int)
-                        # Remove rows where SKU is missing (e.g., empty table rows)
-                        df.dropna(subset=['SKU'], inplace=True) 
-                        all_data.append(df)
-                        st.success(f"Successfully extracted and loaded data from **{account_name}**.")
-                    else:
-                        st.error(f"Extraction failed for {account_name}. Missing required columns (SKU or Qty) after renaming.")
-                        st.dataframe(df.head())
-                        st.write("Columns found:", df.columns.tolist())
-                        
             except Exception as e:
-                st.error(f"An unexpected error occurred processing {account_name}'s PDF: {e}")
+                st.error(f"An unexpected error occurred processing {account_name}'s Excel file: {e}")
+                st.warning("Please ensure your Excel file is not corrupted and contains data on the first sheet.")
 
     return all_data
 
 # --- Streamlit Layout ---
 st.set_page_config(layout="wide")
-st.title("🛍️ Meesho PDF Picklist Merger & Configurator")
-st.caption("Converts multi-account PDF picklists to a single consolidated CSV.")
+st.title("🛍️ Meesho Excel Picklist Merger & Configurator")
+st.caption("Converts multi-account Excel picklists to a single consolidated CSV.")
 
 # Create the two tabs
 tab1, tab2 = st.tabs(["🚀 Order Processing", "⚙️ Configuration"])
@@ -91,7 +77,7 @@ tab1, tab2 = st.tabs(["🚀 Order Processing", "⚙️ Configuration"])
 # TAB 1: Order Processing (The Main Functionality)
 # =========================================================
 with tab1:
-    st.header("Upload PDF Picklists by Account")
+    st.header("Upload Excel Picklists by Account")
     
     uploaded_files_map = {}
     
@@ -102,15 +88,17 @@ with tab1:
         # Cycle through the 3 columns
         with cols[i % 3]: 
             key = f"file_uploader_{account_name}"
+            # *** KEY CHANGE: Set type to ['xlsx', 'xls'] ***
             uploaded_files_map[account_name] = st.file_uploader(
                 f"**{i+1}. {account_name}**", 
-                type=['pdf'],
+                type=['xlsx', 'xls'],
                 key=key
             )
             
     st.markdown("---")
     
     if st.button("Submit & Merge Picklists", type="primary"):
+        # Check if any file was uploaded
         if any(uploaded_files_map.values()):
             
             combined_list = process_uploads(uploaded_files_map)
@@ -139,9 +127,9 @@ with tab1:
                     mime='text/csv',
                 )
             else:
-                st.warning("No files were successfully processed. Please ensure your PDFs contain clear, text-based tables.")
+                st.warning("No files were successfully processed. Please ensure your Excel files are valid.")
         else:
-            st.warning("Please upload at least one PDF picklist file to proceed.")
+            st.warning("Please upload at least one Excel picklist file to proceed.")
 
 
 # =========================================================
