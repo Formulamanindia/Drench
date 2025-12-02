@@ -16,6 +16,15 @@ if 'account_list' not in st.session_state:
 def process_uploads(uploaded_files_map):
     all_data = []
     
+    # Define standard column mapping for Meesho picklist PDFs
+    # **NOTE: YOU MUST VERIFY THESE NAMES AGAINST YOUR ACTUAL PDF OUTPUT**
+    COLUMN_MAPPING = {
+        'Product ID': 'SKU', 
+        'Qty to Ship': 'Qty', 
+        'Order Item ID': 'Order ID',
+        'Item Qty': 'Qty', # Alternate common quantity name
+    }
+    
     for account_name, file in uploaded_files_map.items():
         if file is not None:
             st.info(f"Processing PDF for: **{account_name}**...")
@@ -49,14 +58,8 @@ def process_uploads(uploaded_files_map):
                     df['Source_Account'] = account_name
                     
                     # --- CRITICAL: STANDARDIZATION & CLEANING STEP ---
-                    # **You MUST update these column names to match what pdfplumber extracts**
-                    # Check your actual PDF output and replace the example names below.
-                    # Common names for Meesho picklist data:
-                    df.rename(columns={
-                        'Product ID': 'SKU', 
-                        'Qty to Ship': 'Qty', 
-                        'Order Item ID': 'Order ID'
-                    }, inplace=True, errors='ignore') # 'errors=ignore' prevents crash if column doesn't exist
+                    # Rename columns based on the predefined mapping
+                    df.rename(columns=COLUMN_MAPPING, inplace=True, errors='ignore') 
                     
                     # Clean up data and validate
                     if 'SKU' in df.columns and 'Qty' in df.columns:
@@ -68,6 +71,8 @@ def process_uploads(uploaded_files_map):
                         st.success(f"Successfully extracted and loaded data from **{account_name}**.")
                     else:
                         st.error(f"Extraction failed for {account_name}. Missing required columns (SKU or Qty) after renaming.")
+                        st.dataframe(df.head())
+                        st.write("Columns found:", df.columns.tolist())
                         
             except Exception as e:
                 st.error(f"An unexpected error occurred processing {account_name}'s PDF: {e}")
@@ -125,7 +130,6 @@ with tab1:
                 st.subheader("✅ Consolidated Picklist Ready")
                 st.dataframe(final_picklist)
                 
-
                 # Downloadable Result in CSV format
                 csv_file = final_picklist.to_csv(index=False).encode('utf-8')
                 st.download_button(
