@@ -3,14 +3,77 @@ import pandas as pd
 import io
 import tempfile
 import os
+import pdfplumber # <-- New Library Import
 
-# --- CRITICAL FIX: Explicitly set JAVA_HOME for tabula-py ---
-# This path is common for packages installed via apt on Debian/Ubuntu systems
-# (which Streamlit Cloud uses) and often fixes the "Java not found" issue.
-# The path might vary slightly, but this is the most common path for JRE 11.
-os.environ['JAVA_HOME'] = '/usr/lib/jvm/java-11-openjdk-amd64/' 
-os.environ['PATH'] = os.environ['PATH'] + ':' + os.environ['JAVA_HOME'] + 'bin/'
-# -------------------------------------------------------------
+# --- IMPORTANT: Remove the Java Path setting lines (os.environ['JAVA_HOME']) ---
+# The previous Java-related fix must be deleted from main_app.py!
+
+# --- Configuration Management (Using st.session_state) ---
+if 'account_list' not in st.session_state:
+    st.session_state.account_list = [
+        "Drench", "Drench India", "Sparsh", "Sparsh SC", 
+        "Shine Arc", "Shopforher", "Ansh Ent.", "Meesho India" 
+    ]
+
+# Function to read and process the uploaded PDF files using pdfplumber
+def process_uploads(uploaded_files_map):
+    all_data = []
+    
+    for account_name, file in uploaded_files_map.items():
+        if file is not None:
+            st.info(f"Processing PDF for: **{account_name}** with pdfplumber...")
+            
+            try:
+                # 1. Use BytesIO buffer directly (no temp file needed)
+                with pdfplumber.open(file) as pdf:
+                    
+                    account_dfs = []
+                    
+                    # 2. Iterate through all pages in the PDF
+                    for page in pdf.pages:
+                        # Extract tables using pdfplumber's built-in table finder
+                        tables = page.extract_tables() 
+                        
+                        for table in tables:
+                            # Convert the extracted table (list of lists) into a DataFrame
+                            # The first row is usually the header
+                            if table and len(table) > 1:
+                                df_page = pd.DataFrame(table[1:], columns=table[0])
+                                account_dfs.append(df_page)
+
+                    # 3. Concatenate all extracted tables from all pages
+                    if not account_dfs:
+                        st.warning(f"Could not extract any tables from {account_name}'s PDF. Skipping.")
+                        continue
+                        
+                    df = pd.concat(account_dfs, ignore_index=True)
+                    
+                    # 4. Add the mandatory Account Name column
+                    df['Source_Account'] = account_name
+                    
+                    # --- IMPORTANT: Standardize Column Names and Clean Data Here ---
+                    # **CRITICAL STEP:** Replace the placeholder names below with the actual header names 
+                    # extracted by pdfplumber from your picklists.
+                    # Example (You MUST confirm these names):
+                    df.rename(columns={'Product_Code': 'SKU', 'Final Qty': 'Qty', 'Order Number': 'Order ID'}, inplace=True)
+                    
+                    # 5. Final validation and append
+                    if 'SKU' in df.columns and 'Qty' in df.columns:
+                        df['Qty'] = pd.to_numeric(df['Qty'], errors='coerce').fillna(0)
+                        all_data.append(df)
+                        st.success(f"Successfully extracted and loaded data from **{account_name}**.")
+                    else:
+                        st.error(f"Error in {account_name}: Missing required columns ('SKU', 'Qty') after standardization. Check your PDF table format.")
+                        
+            except Exception as e:
+                st.error(f"An unexpected error occurred processing {account_name}'s PDF: {e}")
+
+    return all_data
+
+
+# The rest of your Streamlit layout (tab1, tab2) remains largely the same.
+# Ensure you update the import list at the very top of your file.
+# The aggregation logic (groupby) remains the same.
 
 import tabula # Now the import should work as Java path is set
 
