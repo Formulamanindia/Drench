@@ -1,3 +1,4 @@
 streamlit
 pandas
 openpyxl # Only if you plan to handle Excel files
+tabula-py
