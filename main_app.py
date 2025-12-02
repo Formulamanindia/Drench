@@ -1,12 +1,23 @@
 import streamlit as st
 import pandas as pd
 import io
-import tabula # This is the import that is failing
 import tempfile
 import os
 
+# --- CRITICAL FIX: Explicitly set JAVA_HOME for tabula-py ---
+# This path is common for packages installed via apt on Debian/Ubuntu systems
+# (which Streamlit Cloud uses) and often fixes the "Java not found" issue.
+# The path might vary slightly, but this is the most common path for JRE 11.
+os.environ['JAVA_HOME'] = '/usr/lib/jvm/java-11-openjdk-amd64/' 
+os.environ['PATH'] = os.environ['PATH'] + ':' + os.environ['JAVA_HOME'] + 'bin/'
+# -------------------------------------------------------------
+
+import tabula # Now the import should work as Java path is set
+
+# The rest of your code follows...
 # --- Configuration Management (Using st.session_state) ---
 if 'account_list' not in st.session_state:
+# ... (rest of your app code)
     st.session_state.account_list = [
         "Drench", "Drench India", "Sparsh", "Sparsh SC", 
         "Shine Arc", "Shopforher", "Ansh Ent.", "Meesho India" 
