@@ -1,14 +1,11 @@
 import streamlit as st
 import pandas as pd
 import io
-import tempfile
-import os
-import pdfplumber # <-- New Library Import
+import pdfplumber
 
-# --- IMPORTANT: Remove the Java Path setting lines (os.environ['JAVA_HOME']) ---
-# The previous Java-related fix must be deleted from main_app.py!
+# --- Configuration Management (Uses st.session_state) ---
 
-# --- Configuration Management (Using st.session_state) ---
+# Initialize the list of accounts if not already in session state
 if 'account_list' not in st.session_state:
     st.session_state.account_list = [
         "Drench", "Drench India", "Sparsh", "Sparsh SC", 
@@ -21,27 +18,27 @@ def process_uploads(uploaded_files_map):
     
     for account_name, file in uploaded_files_map.items():
         if file is not None:
-            st.info(f"Processing PDF for: **{account_name}** with pdfplumber...")
+            st.info(f"Processing PDF for: **{account_name}**...")
             
             try:
-                # 1. Use BytesIO buffer directly (no temp file needed)
+                # Open the PDF file using pdfplumber from the uploaded buffer
                 with pdfplumber.open(file) as pdf:
                     
                     account_dfs = []
                     
-                    # 2. Iterate through all pages in the PDF
+                    # Iterate through all pages in the PDF
                     for page in pdf.pages:
-                        # Extract tables using pdfplumber's built-in table finder
+                        # Extract all detected tables on the page
                         tables = page.extract_tables() 
                         
                         for table in tables:
                             # Convert the extracted table (list of lists) into a DataFrame
-                            # The first row is usually the header
                             if table and len(table) > 1:
+                                # Use the first row as headers, and the rest as data
                                 df_page = pd.DataFrame(table[1:], columns=table[0])
                                 account_dfs.append(df_page)
 
-                    # 3. Concatenate all extracted tables from all pages
+                    # Concatenate all extracted tables from all pages for this account
                     if not account_dfs:
                         st.warning(f"Could not extract any tables from {account_name}'s PDF. Skipping.")
                         continue
@@ -51,120 +48,58 @@ def process_uploads(uploaded_files_map):
                     # 4. Add the mandatory Account Name column
                     df['Source_Account'] = account_name
                     
-                    # --- IMPORTANT: Standardize Column Names and Clean Data Here ---
-                    # **CRITICAL STEP:** Replace the placeholder names below with the actual header names 
-                    # extracted by pdfplumber from your picklists.
-                    # Example (You MUST confirm these names):
-                    df.rename(columns={'Product_Code': 'SKU', 'Final Qty': 'Qty', 'Order Number': 'Order ID'}, inplace=True)
+                    # --- CRITICAL: STANDARDIZATION & CLEANING STEP ---
+                    # **You MUST update these column names to match what pdfplumber extracts**
+                    # Check your actual PDF output and replace the example names below.
+                    # Common names for Meesho picklist data:
+                    df.rename(columns={
+                        'Product ID': 'SKU', 
+                        'Qty to Ship': 'Qty', 
+                        'Order Item ID': 'Order ID'
+                    }, inplace=True, errors='ignore') # 'errors=ignore' prevents crash if column doesn't exist
                     
-                    # 5. Final validation and append
+                    # Clean up data and validate
                     if 'SKU' in df.columns and 'Qty' in df.columns:
-                        df['Qty'] = pd.to_numeric(df['Qty'], errors='coerce').fillna(0)
+                        # Convert Quantity to numeric, coercing errors to 0
+                        df['Qty'] = pd.to_numeric(df['Qty'], errors='coerce').fillna(0).astype(int)
+                        # Remove rows where SKU is missing (e.g., empty table rows)
+                        df.dropna(subset=['SKU'], inplace=True) 
                         all_data.append(df)
                         st.success(f"Successfully extracted and loaded data from **{account_name}**.")
                     else:
-                        st.error(f"Error in {account_name}: Missing required columns ('SKU', 'Qty') after standardization. Check your PDF table format.")
+                        st.error(f"Extraction failed for {account_name}. Missing required columns (SKU or Qty) after renaming.")
                         
             except Exception as e:
                 st.error(f"An unexpected error occurred processing {account_name}'s PDF: {e}")
 
     return all_data
 
-
-# The rest of your Streamlit layout (tab1, tab2) remains largely the same.
-# Ensure you update the import list at the very top of your file.
-# The aggregation logic (groupby) remains the same.
-
-import tabula # Now the import should work as Java path is set
-
-# The rest of your code follows...
-# --- Configuration Management (Using st.session_state) ---
-if 'account_list' not in st.session_state:
-# ... (rest of your app code)
-    st.session_state.account_list = [
-        "Drench", "Drench India", "Sparsh", "Sparsh SC", 
-        "Shine Arc", "Shopforher", "Ansh Ent.", "Meesho India" 
-    ]
-
-# Function to read and process the uploaded PDF files
-def process_uploads(uploaded_files_map):
-    all_data = []
-    
-    for account_name, file in uploaded_files_map.items():
-        if file is not None:
-            st.info(f"Processing PDF for: **{account_name}**...")
-            
-            # Streamlit file uploader returns a BytesIO object, but tabula-py often 
-            # requires a temporary file path for reliable table extraction.
-            try:
-                # 1. Write uploaded file to a temporary file
-                with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
-                    tmp_file.write(file.getvalue())
-                    tmp_file_path = tmp_file.name
-
-                # 2. Extract tables using tabula-py
-                # 'pages="all"' extracts tables from all pages
-                # 'multiple_tables=True' returns a list of DataFrames if multiple tables are found
-                dfs = tabula.read_pdf(tmp_file_path, pages="all", multiple_tables=True, guess=True)
-                
-                # Check if tables were successfully extracted
-                if not dfs:
-                    st.warning(f"Could not extract any tables from {account_name}'s PDF. Skipping.")
-                    continue
-                
-                # 3. Concatenate all extracted tables into a single DataFrame for the account
-                df = pd.concat(dfs, ignore_index=True)
-                
-                # 4. Add the mandatory Account Name column
-                df['Source_Account'] = account_name
-                
-                # --- IMPORTANT: Standardize Column Names and Clean Data Here ---
-                # **CRITICAL STEP:** Rename PDF headers (which may be messy) to standardized names.
-                # You MUST replace the placeholder names below with the actual names you see in the PDF output.
-                # Example:
-                df.rename(columns={'Product_Code': 'SKU', 'Final Qty': 'Qty', 'Order Number': 'Order ID'}, inplace=True)
-                
-                # 5. Final validation and append
-                # Replace 'SKU' and 'Qty' with your standardized column names
-                if 'SKU' in df.columns and 'Qty' in df.columns:
-                    # Clean up data types (e.g., ensure quantity is numeric)
-                    df['Qty'] = pd.to_numeric(df['Qty'], errors='coerce').fillna(0)
-                    all_data.append(df)
-                    st.success(f"Successfully extracted and loaded data from **{account_name}**.")
-                else:
-                    st.error(f"Error in {account_name}: Missing required columns ('SKU', 'Qty') after extraction/standardization. Check your PDF table format.")
-                    
-            except Exception as e:
-                st.error(f"An unexpected error occurred processing {account_name}'s PDF: {e}")
-            finally:
-                # Clean up the temporary file
-                if 'tmp_file_path' in locals() and os.path.exists(tmp_file_path):
-                    os.unlink(tmp_file_path)
-
-    return all_data
-
 # --- Streamlit Layout ---
+st.set_page_config(layout="wide")
 st.title("🛍️ Meesho PDF Picklist Merger & Configurator")
-st.caption("Converts PDF picklists to a consolidated CSV via table extraction.")
+st.caption("Converts multi-account PDF picklists to a single consolidated CSV.")
 
+# Create the two tabs
 tab1, tab2 = st.tabs(["🚀 Order Processing", "⚙️ Configuration"])
 
 # =========================================================
-# TAB 1: Order Processing (Main Functionality)
+# TAB 1: Order Processing (The Main Functionality)
 # =========================================================
 with tab1:
     st.header("Upload PDF Picklists by Account")
     
     uploaded_files_map = {}
+    
+    # Create the upload options dynamically using 3 columns
     cols = st.columns(3) 
     
     for i, account_name in enumerate(st.session_state.account_list):
+        # Cycle through the 3 columns
         with cols[i % 3]: 
             key = f"file_uploader_{account_name}"
-            # Changed 'type' to accept only PDF files
             uploaded_files_map[account_name] = st.file_uploader(
                 f"**{i+1}. {account_name}**", 
-                type=['pdf'], 
+                type=['pdf'],
                 key=key
             )
             
@@ -178,16 +113,18 @@ with tab1:
             if combined_list:
                 combined_df = pd.concat(combined_list, ignore_index=True)
                 
-                # Aggregation/Grouping (The core merging logic remains the same)
-                # Group by SKU and sum the quantities from all accounts
+                # Aggregation/Grouping: Group by SKU and sum quantities
                 final_picklist = combined_df.groupby('SKU').agg(
                     Total_Quantity=('Qty', 'sum'),
+                    # List unique accounts involved
                     Source_Accounts=('Source_Account', lambda x: ', '.join(x.unique())),
-                    Orders_Involved=('Order ID', lambda x: ', '. join(x.astype(str).unique()))
+                    # List all unique Order IDs involved (for tracking)
+                    Orders_Involved=('Order ID', lambda x: ', '.join(x.dropna().astype(str).unique()))
                 ).reset_index()
 
                 st.subheader("✅ Consolidated Picklist Ready")
                 st.dataframe(final_picklist)
+                
 
                 # Downloadable Result in CSV format
                 csv_file = final_picklist.to_csv(index=False).encode('utf-8')
@@ -204,17 +141,13 @@ with tab1:
 
 
 # =========================================================
-# TAB 2: Configuration (Adding/Removing Accounts) - Remains the same
+# TAB 2: Configuration (Adding/Removing Accounts)
 # =========================================================
 with tab2:
     st.header("Account Configuration")
-    st.write("Manage the list of accounts that appear in the upload section.")
+    st.write("Manage the list of accounts that appear in the upload section. Changes are saved for your session.")
     
-    # ... (Configuration logic from the previous response goes here, using st.session_state.account_list)
-    # The functions for adding and removing accounts are not repeated for brevity.
-
-    current_list = st.session_state.account_list.copy()
-
+    # Function to add a new account
     def add_account():
         if st.session_state.new_account_name and st.session_state.new_account_name not in st.session_state.account_list:
             st.session_state.account_list.append(st.session_state.new_account_name)
@@ -228,13 +161,16 @@ with tab2:
     st.markdown("---")
 
     st.subheader("🗑️ Existing Accounts")
+    current_list = st.session_state.account_list.copy()
+
     if current_list:
         cols_config = st.columns(3)
         for i, account in enumerate(current_list):
             with cols_config[i % 3]:
+                # Button to remove the account
                 if st.button(f"Remove {account}", key=f"remove_{account}"):
                     st.session_state.account_list.remove(account)
-                    st.experimental_rerun() 
+                    st.experimental_rerun() # Rerun to update the display
     else:
         st.info("No accounts configured yet.")
 
